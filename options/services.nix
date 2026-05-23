@@ -5,9 +5,9 @@ let
     attrValues
     flatten
     flip
-    mkDefault
     mkIf
     mkOption
+    mkOverride
     types
     ;
 in
@@ -82,9 +82,10 @@ f {
                 };
 
                 config = {
-                  # Set the default icon, if an icon exists with a matching name
+                  # Set the default icon, if an icon exists with a matching name.
+                  # Weaker than mkDefault, so icons set by extractors (with mkDefault) win.
                   icon = mkIf (config.topology.isMainModule && config.icons.services ? ${submod.config.id}) (
-                    mkDefault ("services." + submod.config.id)
+                    mkOverride 1100 ("services." + submod.config.id)
                   );
                 };
               })
