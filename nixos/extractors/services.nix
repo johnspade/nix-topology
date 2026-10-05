@@ -97,6 +97,26 @@ in
         info = "https://${config.services.bentopdf.domain}";
       };
 
+      bind9 =
+        let
+          cfg = config.services.bind;
+          replaceAny = addr: replacement: if addr == "any" then replacement else addr;
+        in
+        mkIf cfg.enable {
+          name = "Bind9";
+          icon = "services.bind9";
+          details = {
+            listen_ipv4.text = toString (
+              map (address: "${replaceAny address "0.0.0.0"}:${toString cfg.listenOnPort}") cfg.listenOn
+            );
+            listen_ipv6 = lib.mkIf (!cfg.ipv4Only) {
+              text = toString (
+                map (address: "${replaceAny address "[::]"}:${toString cfg.listenOnIpv6Port}") cfg.listenOnIpv6
+              );
+            };
+          };
+        };
+
       blocky = mkIf config.services.blocky.enable {
         name = "Blocky";
         icon = "services.blocky";
@@ -119,11 +139,12 @@ in
             # Separate lines of string into list
             (splitString "\n")
             # Filter out lines that don't start with reverse_proxy
-            (filter (line: hasPrefix "reverse_proxy " line))
+            (filter (hasPrefix "reverse_proxy "))
             # Remove the prefix and suffix, so only the list of hosts are left
-            (map (line: removePrefix "reverse_proxy " (removeSuffix " {" line)))
+            (map (removeSuffix " {"))
+            (map (removePrefix "reverse_proxy "))
             # Turn the (possibly multiple) strings in the list into a single string
-            (concatStringsSep " ")
+            toString
           ];
         });
       };
@@ -164,12 +185,21 @@ in
           let
             addresses = config.services.dnsmasq.settings.address or [ ];
           in
-          listToAttrs (
-            forEach (forEach addresses (x: (splitString "/" (removePrefix "/" x)))) (x: {
+          pipe addresses [
+            (map (removePrefix "/"))
+            (map (splitString "/"))
+            (map (x: {
               name = head x;
               value.text = head (tail x);
-            })
-          );
+            }))
+            listToAttrs
+          ];
+      };
+
+      echoip = mkIf config.services.echoip.enable {
+        name = "Echoip";
+        icon = "services.not-available";
+        details.listen.text = config.services.echoip.listenAddress;
       };
 
       esphome = mkIf config.services.esphome.enable {
@@ -202,7 +232,7 @@ in
         icon = "services.firefox-syncserver";
         info = mkIf config.services.firefox-syncserver.singleNode.enable config.services.firefox-syncserver.singleNode.url;
         details.listen.text = "${
-          config.services.firefox-syncserversettings.host or "127.0.0.1"
+          config.services.firefox-syncserver.settings.host or "127.0.0.1"
         }:${toString config.services.firefox-syncserver.settings.port}";
       };
 
@@ -261,7 +291,7 @@ in
 
       harmonia =
         mkIf
-          (config.services.harmonia.cache.enable or config.services.harmonia-dev.cache.enable
+          (config.services.harmonia-dev.cache.enable or config.services.harmonia.cache.enable
             or config.services.harmonia.enable or false
           )
           {
@@ -603,6 +633,16 @@ in
         info = config.services.oauth2-proxy.httpAddress;
       };
 
+      oink = mkIf config.services.oink.enable {
+        name = "Oink";
+        icon = "services.oink";
+        details.domains.text = toString (
+          forEach config.services.oink.domains (
+            entry: if (entry.subdomain or "") == "" then entry.domain else "${entry.subdomain}.${entry.domain}"
+          )
+        );
+      };
+
       ollama = mkIf config.services.ollama.enable {
         name = "Ollama";
         icon = "services.ollama";
@@ -642,7 +682,7 @@ in
 
       paperless-ngx =
         let
-          inherit (config.services.paperless.settings) domain;
+          inherit (config.services.paperless) domain;
         in
         mkIf config.services.paperless.enable {
           name = "Paperless-ngx";
@@ -658,6 +698,22 @@ in
         details.listen.text = "${config.services.plausible.server.listenAddress}:${toString config.services.plausible.server.port}";
       };
 
+      mysql =
+        let
+          name = lib.getName config.services.mysql.package;
+        in
+        mkIf config.services.mysql.enable (
+          if name == "mariadb-server" then
+            {
+              name = "MariaDB";
+              icon = "services.mariadb";
+            }
+          else
+            {
+              name = "MySQL";
+              icon = "services.mysql";
+            }
+        );
       postgresql = mkIf config.services.postgresql.enable {
         name = "PostgreSQL";
         icon = "services.postgresql";
@@ -783,7 +839,7 @@ in
         mkIf config.services.tempo.enable {
           name = "Tempo";
           icon = "services.tempo";
-          details.listen = mkIf (address != null && port != null) { text = "${address}:${port}"; };
+          details.listen = mkIf (address != null && port != null) { text = "${address}:${toString port}"; };
         };
 
       tor = mkIf config.services.tor.enable {
