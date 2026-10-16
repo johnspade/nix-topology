@@ -2,19 +2,27 @@ _: {
   name = "Seerr";
   icon = "services.seerr";
   nixos = {
-    path = "services.seerr";
+    # Also covers `services.jellyseerr`, the only option before nixpkgs 26.05
+    path = "services";
+    enabled = cfg: (cfg.seerr or cfg.jellyseerr or { }).enable or false;
     detailsFn =
       cfg:
-      if cfg.openFirewall or false then
+      let
+        seerr = cfg.seerr or cfg.jellyseerr;
+      in
+      if seerr.openFirewall or false then
         {
           listen = {
-            text = "0.0.0.0:${toString cfg.port}";
+            text = "0.0.0.0:${toString seerr.port}";
           };
         }
       else
         { };
   };
   test = {
+    minimalConfig = {
+      services.seerr.enable = true;
+    };
     # Via the deprecated `jellyseerr` alias, which must not show up as a separate service
     config = {
       services.jellyseerr = {
