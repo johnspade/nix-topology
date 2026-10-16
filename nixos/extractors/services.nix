@@ -29,7 +29,7 @@ let
   }) (config.services.restic.backups or { });
 
   mkServiceFor =
-    _id: spec:
+    id: spec:
     let
       specNix = spec.nixos or null;
     in
@@ -39,7 +39,15 @@ let
         enabled = specNix.enabled cfg;
       in
       mkIf enabled {
-        name = mkDefault (if specNix.nameFn != null then specNix.nameFn cfg else spec.name);
+        name = mkDefault (
+          if specNix.nameFn != null then
+            specNix.nameFn cfg
+          # Registry entries without a name use the service id
+          else if spec.name != "" then
+            spec.name
+          else
+            id
+        );
         icon = mkDefault (if specNix.iconFn != null then specNix.iconFn cfg else spec.icon);
         hidden = mkDefault (spec.hidden or false);
         info =

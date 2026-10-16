@@ -8,6 +8,7 @@ let
     r.success && r.value == "mariadb-server";
 in
 {
+  name = "MySQL";
   icon = "services.mysql";
   nixos = {
     path = "services.mysql";

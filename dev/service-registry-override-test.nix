@@ -181,6 +181,10 @@ let
             enabled = _: true;
           };
         };
+        topology.serviceRegistry.nameless.nixos = {
+          path = "networking";
+          enabled = _: true;
+        };
       }
     ];
   };
@@ -269,6 +273,11 @@ let
         hostLocalNodes.node-r.services.myapp.name or "<missing>"
       }'";
     }
+    # Missing registry names fall back to the service's id
+    {
+      assertion = hostLocalNodes.node-r.services.nameless.name == "nameless";
+      message = "nameless extracted service: expected 'nameless', got '${hostLocalNodes.node-r.services.nameless.name}'";
+    }
     {
       assertion = lazyInfo.success && lazyInfo.value == "";
       message = "function fields: a returned mkIf false must not be evaluated, got ${builtins.toJSON lazyInfo}";
@@ -292,6 +301,7 @@ else
     echo "  - Partial nixos.* override keeps the registry entry: OK"
     echo "  - User-set info is used as-is: OK"
     echo "  - Container override doesn't affect its host: OK"
+    echo "  - Registry entries without a name fall back to the service id: OK"
     echo "  - Dynamic icon (iconFn) is used in the topology: OK"
     echo "  - Host-only registry entries work on that host: OK"
     echo "  - Function fields are stored as-is and must be functions: OK"
