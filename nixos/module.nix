@@ -101,6 +101,8 @@ in
         # Ensure a node exists for this host
         topology.nodes.${config.topology.id}.deviceType = "nixos";
         topology.serviceRegistry = serviceDefs;
+        # Services of this host resolve their serviceId against the host's registry
+        topology.self.serviceRegistry = config.topology.serviceRegistry;
       }
     ]
     ++ flip map toplevelRelevantOptions (opt: {

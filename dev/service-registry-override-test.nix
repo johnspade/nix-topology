@@ -146,7 +146,36 @@ let
   };
   nodeHNodes = builtins.deepSeq nodeH.config.topology.nodes nodeH.config.topology.nodes;
 
-  # --- Scenario 6: Dynamic icon (iconFn) in the rendered topology ---
+  # --- Scenario 6: serviceId on a non-NixOS node, without any NixOS hosts ---
+  noHostsEval = import self {
+    inherit pkgs;
+    modules = [
+      {
+        nodes.router = {
+          deviceType = "router";
+          services.dns.serviceId = "adguardhome";
+        };
+      }
+    ];
+  };
+  # A registry entry without a name, on a non-NixOS node
+  namelessEval = import self {
+    inherit pkgs;
+    modules = [
+      {
+        serviceRegistry.nameless.icon = "services.grafana";
+        nodes.router = {
+          deviceType = "router";
+          services.db.serviceId = "mysql";
+          services.app.serviceId = "nameless";
+        };
+      }
+    ];
+  };
+  namelessServices = namelessEval.config.nodes.router.services;
+  noHostsFailed = builtins.filter (a: !a.assertion) noHostsEval.config.assertions;
+
+  # --- Scenario 7: Dynamic icon (iconFn) in the rendered topology ---
   nodeM = nixosSystem {
     inherit system;
     modules = baseModules ++ [
@@ -165,7 +194,7 @@ let
   };
   dynamicIcon = builtins.tryEval dynamicIconEval.config.nodes.node-m.services.mysql.icon;
 
-  # --- Scenario 7: Entries only defined in a host's registry ---
+  # --- Scenario 8: Host registries stay local to their host ---
   nodeR = nixosSystem {
     inherit system;
     modules = baseModules ++ [
@@ -190,11 +219,61 @@ let
   };
   hostLocalEval = import self {
     inherit pkgs;
-    modules = [ { nixosConfigurations.node-r = nodeR; } ];
+    modules = [
+      {
+        nixosConfigurations.node-r = nodeR;
+        nodes.nas = {
+          deviceType = "device";
+          services.monitoring.serviceId = "grafana";
+          services.typo.serviceId = "grafanna";
+        };
+      }
+    ];
   };
   hostLocalNodes = hostLocalEval.config.nodes;
+  hostLocalFailed = map (a: a.message) (
+    builtins.filter (a: !a.assertion) hostLocalEval.config.assertions
+  );
 
-  # --- Scenario 8: Function fields are stored as-is and must be functions ---
+  # --- Scenario 10: A manually added serviceId on a NixOS host uses that host's registry ---
+  nodeS = nixosSystem {
+    inherit system;
+    modules = baseModules ++ [
+      {
+        networking.hostName = "node-s";
+        topology.serviceRegistry.grafana.name = "Node-S Grafana";
+        # Only defined in this host's config, not extracted
+        topology.serviceRegistry.myapp = {
+          name = "My App";
+          icon = "services.grafana";
+        };
+        topology.self.services.db.serviceId = "grafana";
+        topology.self.services.app.serviceId = "myapp";
+        topology.self.services.typo.serviceId = "grafanna";
+      }
+    ];
+  };
+  manualHostServices = nodeS.config.topology.self.services;
+  manualEval = import self {
+    inherit pkgs;
+    modules = [ { nixosConfigurations.node-s = nodeS; } ];
+  };
+  manualTopServices = manualEval.config.nodes.node-s.services;
+  manualFailed = map (a: a.message) (builtins.filter (a: !a.assertion) manualEval.config.assertions);
+  nameIcon = s: { inherit (s) name icon; };
+  manualExpected = {
+    db = {
+      name = "Node-S Grafana";
+      icon = "services.grafana";
+    };
+    app = {
+      name = "My App";
+      icon = "services.grafana";
+    };
+  };
+  manualGot = services: lib.mapAttrs (n: _: nameIcon services.${n}) manualExpected;
+
+  # --- Scenario 9: Function fields are stored as-is and must be functions ---
   grafanaWith =
     modules:
     nixosSystem {
@@ -260,23 +339,58 @@ let
       assertion = nodeHNodes.guest.services.grafana.name == "Guest Grafana";
       message = "container override: container should have 'Guest Grafana', got '${nodeHNodes.guest.services.grafana.name}'";
     }
+    # Built-in registry entries are available without NixOS hosts
+    {
+      assertion =
+        noHostsFailed == [ ] && noHostsEval.config.nodes.router.services.dns.name == "AdGuard Home";
+      message = "no NixOS hosts: serviceId 'adguardhome' should resolve, failed assertions: ${
+        toString (map (a: a.message) noHostsFailed)
+      }";
+    }
+    # Missing registry names fall back to the service's id
+    {
+      assertion = namelessServices.db.name == "MySQL" && namelessServices.app.name == "app";
+      message = "nameless registry entries: expected 'MySQL' and 'app', got '${namelessServices.db.name}' and '${namelessServices.app.name}'";
+    }
+    {
+      assertion = hostLocalNodes.node-r.services.nameless.name == "nameless";
+      message = "nameless extracted service: expected 'nameless', got '${hostLocalNodes.node-r.services.nameless.name}'";
+    }
     {
       assertion = dynamicIcon.success && dynamicIcon.value == "services.mariadb";
       message = "dynamic icon: expected 'services.mariadb' for mysql with mariadb in the topology, got ${builtins.toJSON dynamicIcon}";
     }
-    # Host-only entries work on that host
+    # A host's override doesn't apply to services on other nodes
+    {
+      assertion = hostLocalNodes.nas.services.monitoring.name == "Grafana";
+      message = "host-local registry: expected 'Grafana' on nas, got '${hostLocalNodes.nas.services.monitoring.name}'";
+    }
+    # Host-only entries work on that host, typos on non-NixOS nodes are reported
     {
       assertion =
         hostLocalNodes.node-r.services.grafana.name == "Node-R Grafana"
-        && hostLocalNodes.node-r.services.myapp.name == "My App";
-      message = "host-local registry: expected 'Node-R Grafana' and 'My App', got '${hostLocalNodes.node-r.services.grafana.name}' and '${
-        hostLocalNodes.node-r.services.myapp.name or "<missing>"
-      }'";
+        && hostLocalNodes.node-r.services.myapp.name == "My App"
+        &&
+          hostLocalFailed == [
+            "serviceId 'grafanna' for nodes.nas.services.typo is not defined in topology.serviceRegistry"
+          ];
+      message = "host-local registry: unexpected failed assertions: ${toString hostLocalFailed}";
     }
-    # Missing registry names fall back to the service's id
+    # A manually added serviceId resolves against the host's registry, on the host and in the topology
     {
-      assertion = hostLocalNodes.node-r.services.nameless.name == "nameless";
-      message = "nameless extracted service: expected 'nameless', got '${hostLocalNodes.node-r.services.nameless.name}'";
+      assertion = manualGot manualHostServices == manualExpected;
+      message = "manual serviceId on host: expected ${builtins.toJSON manualExpected}, got ${builtins.toJSON (manualGot manualHostServices)}";
+    }
+    {
+      assertion = manualGot manualTopServices == manualExpected;
+      message = "manual serviceId in topology: expected ${builtins.toJSON manualExpected}, got ${builtins.toJSON (manualGot manualTopServices)}";
+    }
+    {
+      assertion =
+        manualFailed == [
+          "serviceId 'grafanna' for nodes.node-s.services.typo is not defined in topology.serviceRegistry"
+        ];
+      message = "manual serviceId on host: unexpected failed assertions: ${toString manualFailed}";
     }
     {
       assertion = lazyInfo.success && lazyInfo.value == "";
@@ -301,9 +415,11 @@ else
     echo "  - Partial nixos.* override keeps the registry entry: OK"
     echo "  - User-set info is used as-is: OK"
     echo "  - Container override doesn't affect its host: OK"
+    echo "  - Built-in registry entries are available without NixOS hosts: OK"
     echo "  - Registry entries without a name fall back to the service id: OK"
     echo "  - Dynamic icon (iconFn) is used in the topology: OK"
-    echo "  - Host-only registry entries work on that host: OK"
+    echo "  - Host registries stay local to their host: OK"
+    echo "  - Manual serviceId on a NixOS host uses the host's registry, typos are reported: OK"
     echo "  - Function fields are stored as-is and must be functions: OK"
     echo "ok" > $out
   ''

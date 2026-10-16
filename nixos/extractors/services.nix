@@ -39,6 +39,8 @@ let
         enabled = specNix.enabled cfg;
       in
       mkIf enabled {
+        serviceId = id;
+
         name = mkDefault (
           if specNix.nameFn != null then
             specNix.nameFn cfg
